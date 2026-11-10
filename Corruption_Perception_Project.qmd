@@ -1,0 +1,329 @@
+---
+title: "Perception of Corruption - Analysis Project"
+author: "Marshall Prizio"
+format: html
+editor: visual
+execute:
+  warning: false
+  message: false
+embed-resources: true
+self-contained-math: true
+---
+
+## Executive Summary
+
+This project investigates individual perceptions of corruption across nations using Wave 7 data from the World Values Survey (WVS) merged with macroeconomic indicators from the World Bank Development Indicators. Through data cleaning, tidy reshaping, relational joins, and hypothesis-driven visualizations, this report evaluates how demographic, institutional, and socioeconomic factors shape citizen perceptions of governance. Additionally, it examines the longitudinal macroeconomic trajectory of Afghanistan (2000–2023). Key findings are summarized in Section 8.
+
+## 1. Packages
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(maps)
+library(here)
+```
+
+## 2. Data Cleaning & Feature Engineering
+
+This pipeline filters primary tracking columns, renames variable identifiers, re-codes special survey non-response values (`-1`, `-2`, `-4`, `-5`) to `NA`, engineers an ordinal age category, and isolates the 2020 WVS cross-section.
+
+```{r}
+#| label: wvs-cleaning
+#| code-summary: "Click to show WVS data cleaning code"
+
+# Load raw survey data
+WVS <- read.csv(here("CorruptionPerceptionAnalysis", "Data", "WVS_W7.csv"))
+
+# Subset, rename, recode missing values, and bin age categories
+WVS_subset <- WVS |> 
+  select(A_YEAR, B_COUNTRY_ALPHA, D_INTERVIEW, Q260, Q262, Q275R, Q112) |> 
+  rename(
+    sex = Q260,
+    age = Q262,
+    education = Q275R,
+    corruption_perception = Q112
+  ) |> 
+  mutate(across(everything(), ~ ifelse(. %in% c(-1, -2, -4, -5), NA, .))) |> 
+  mutate(age_category = case_when(
+    age >= 16 & age <= 29 ~ "young",
+    age >= 30 & age <= 49 ~ "middle",
+    age >= 50             ~ "senior",
+    TRUE                  ~ NA_character_
+  ))
+
+# Filter for target survey wave (2020)
+WVS_clean <- WVS_subset |> filter(A_YEAR == 2020)
+```
+
+```{r}
+#| label: sample-size
+#| code-summary: "Click to show sample size code"
+
+WVS_clean |>
+  summarise(respondents = n(), countries = n_distinct(B_COUNTRY_ALPHA))
+```
+
+**Interpretation & Methodological Notes**
+
+- **Data Integrity:** Survey non-response codes are systematically converted to `NA` values to ensure missing data does not distort numeric summaries or graphical distributions.
+- **Feature Engineering:** Continuous age observations are grouped into life-stage categories (young, middle, senior) to enable demographic subgroup comparisons.
+- **Sample Scope:** The 2020 cross-section contains 21,187 respondents from only 14 countries (Canada, Ethiopia, Guatemala, Iran, Kyrgyz Republic, Myanmar, Mongolia, Nicaragua, New Zealand, Singapore, Tajikistan, Ukraine, Viet Nam, and Zimbabwe). Country-level results below are therefore based on 14 observations.
+
+## 3. World Bank Data Reshaping & Data Joining
+
+World Bank macroeconomic indicator datasets are delivered in a wide format. This step reshapes the data into tidy country-year observations via double pivoting (`pivot_longer()` and `pivot_wider()`), converts the World Bank's `..` missing-value placeholders to numeric `NA`, and performs a relational `left_join()` with the cleaned WVS survey observations.
+
+```{r}
+#| label: wb-reshaping-and-join
+#| code-summary: "Click to show reshaping and joining code"
+
+# Load World Bank data
+corruption <- read.csv(here("CorruptionPerceptionAnalysis", "Data", "WorldBank_corruption.csv"))
+
+# Reshape wide year columns into long format, then pivot indicator series wide
+WB_clean <- corruption |>
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year",
+    values_to = "value"
+  ) |>
+  mutate(year = as.integer(str_remove(year, "X"))) |>
+  pivot_wider(
+    names_from = Series.Name,
+    values_from = value
+  ) |>
+  # World Bank marks missing values with "..", so convert indicators to numeric
+  mutate(across(-c(Country.Name, Country.Code, year),
+                ~ suppressWarnings(as.numeric(.x))))
+
+# Relational join keyed on ISO country code and survey year
+WVS_WB <- WVS_clean |>
+  left_join(WB_clean, by = c("B_COUNTRY_ALPHA" = "Country.Code", "A_YEAR" = "year"))
+
+# Join check: how many survey countries received a World Bank value?
+WVS_WB |>
+  distinct(B_COUNTRY_ALPHA, ControlCorruption) |>
+  summarise(countries = n(), matched = sum(!is.na(ControlCorruption)))
+```
+
+**Interpretation & Methodological Notes**
+
+- **Tidy Data Principles:** Pivoting converts annual series headers into explicit observation rows, creating a structured dataset where each row represents a unique country-year observation and each column represents a distinct macroeconomic indicator.
+- **Relational Merging:** The `left_join()` anchors on the individual survey responses, mapping country-level indicators (e.g., `ControlCorruption`) to every respondent based on their ISO-3 country code (`B_COUNTRY_ALPHA`) and survey year. The join check confirms that all 14 survey countries matched a World Bank value.
+- **Why ISO codes, not COW codes:** The WVS also provides Correlates of War codes (`C_COW_ALPHA`), but the World Bank uses ISO-3 codes, and the two systems differ for many countries. In the 2020 data, the WVS labels Mongolia `MNE` in its COW column, which is Montenegro's ISO code, so a join on COW codes silently attaches Montenegro's indicators to Mongolia. Joining on `B_COUNTRY_ALPHA` avoids this.
+
+## 4. Hypothesis 1: Demographic Differences in Corruption Perception (Sex)
+
+**Hypothesis:** Male respondents tend to report higher corruption perception scores than female respondents.
+
+```{r}
+#| label: fig-sex-vs-perception
+#| fig-cap: "Distribution of corruption perception scores by respondent sex."
+
+WVS_WB |> 
+  filter(!is.na(sex), !is.na(corruption_perception)) |> 
+  mutate(sex = factor(sex, levels = c(1, 2), labels = c("Male", "Female"))) |> 
+  ggplot(aes(x = sex, y = corruption_perception, fill = sex)) +
+  geom_boxplot() +
+  labs(
+    title = "Perception of Corruption by Sex",
+    x = "Sex",
+    y = "Corruption Perception Score (1–10)",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#| label: h1-test
+#| code-summary: "Click to show statistical test"
+
+sex_data <- WVS_WB |> 
+  filter(!is.na(sex), !is.na(corruption_perception)) |> 
+  mutate(sex = factor(sex, levels = c(1, 2), labels = c("Male", "Female")))
+
+sex_data |> 
+  group_by(sex) |> 
+  summarise(n = n(), mean = mean(corruption_perception), sd = sd(corruption_perception))
+
+t.test(corruption_perception ~ sex, data = sex_data)
+```
+
+**Interpretation**
+
+- **Generalization:** The empirical distribution demonstrates no meaningful difference in perceived corruption between male and female respondents.
+- **Examples:** Both groups exhibit identical median corruption perception scores (8 out of 10) and identical interquartile ranges (5 to 10). Mean scores are 7.09 for men and 7.10 for women, a difference of −0.01 points (Welch *t*-test: 95% CI −0.08 to 0.07, *p* = 0.85).
+- **Exceptions:** The whiskers extend down to the lowest scores for both groups, indicating that individual variance within each sex far exceeds any difference between them.
+- **Hypothesis Evaluation: Not Supported.** Sex does not serve as a determinant of individual corruption perception in this cross-national sample.
+
+## 5. Hypothesis 2: Institutional Control vs. National Perceived Corruption
+
+**Hypothesis:** Countries with higher levels of institutional control of corruption exhibit lower average corruption perception among citizens.
+
+```{r}
+#| label: fig-control-vs-perception
+#| fig-cap: "Scatter plot of World Bank Control of Corruption vs. mean WVS perceived corruption (one point per country, 2020)."
+
+country_level <- WVS_WB |> 
+  filter(!is.na(corruption_perception), !is.na(ControlCorruption)) |> 
+  mutate(ControlCorruption = as.numeric(ControlCorruption)) |> 
+  filter(!is.na(ControlCorruption)) |> 
+  group_by(B_COUNTRY_ALPHA) |> 
+  summarise(
+    mean_corruption_perception = mean(corruption_perception, na.rm = TRUE),
+    ControlCorruption = first(ControlCorruption)
+  )
+
+country_level |> 
+  ggplot(aes(x = ControlCorruption, y = mean_corruption_perception)) +
+  geom_point() +
+  geom_text(aes(label = B_COUNTRY_ALPHA), vjust = -0.8, size = 3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Control of Corruption vs. Mean Corruption Perception",
+    x = "Control of Corruption Score (World Bank)",
+    y = "Mean Corruption Perception Score (WVS)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#| label: h2-test
+#| code-summary: "Click to show statistical test"
+
+cor.test(country_level$ControlCorruption, country_level$mean_corruption_perception)
+cor.test(country_level$ControlCorruption, country_level$mean_corruption_perception,
+         method = "spearman")
+```
+
+**Interpretation**
+
+- **Generalization:** Across the 14 countries surveyed in 2020, countries with stronger institutional control of corruption report lower average perceived corruption (Pearson *r* = −0.69, 95% CI −0.89 to −0.26, *p* = 0.006).
+- **Examples:** Among the 11 countries with weaker control (scores from about −1.4 to −0.4), mean perception is mostly high, for example 8.6 to 9.1 in Zimbabwe, Kyrgyz Republic, and Guatemala. The three countries with strong control (Canada, New Zealand, and Singapore, scores of about +1.6 to +2.1) report 6.7, 5.5, and 3.5.
+- **Exceptions:** Tajikistan has weak control (−1.35) but relatively low perceived corruption (5.6), and Iran is also lower than most weak-control countries (6.8). The sample also has a gap: no countries fall between −0.4 and +1.6, so the fitted line leans heavily on the three high-control countries. A rank-based correlation is weaker (Spearman ρ = −0.49, *p* ≈ 0.07).
+- **Hypothesis Evaluation: Supported, with caution.** The direction and strength match the hypothesis, but with only 14 countries and a clustered distribution, the result is suggestive rather than conclusive.
+
+## 6. Case Study: Longitudinal Macroeconomic Trajectory of Afghanistan (2000–2023)
+
+This section evaluates the dual dynamics of overall economic output (GDP level in billions of current USD) and economic growth volatility (annual GDP growth rate, %) for Afghanistan.
+
+```{r}
+#| label: fig-afghanistan-gdp
+#| fig-cap: "Afghanistan total GDP (Billions USD) and Annual Growth Rate (%) from 2000 to 2023."
+
+# Chart 1: Total GDP
+p1 <- WB_clean |> 
+  filter(Country.Name == "Afghanistan", year >= 2000, year <= 2023) |> 
+  mutate(GDP = as.numeric(GDP) / 1e9) |> 
+  filter(!is.na(GDP)) |> 
+  ggplot(aes(x = year, y = GDP)) +
+  geom_line(color = "#2c3e50", linewidth = 1) +
+  geom_point(color = "#2c3e50", size = 2) +
+  labs(
+    title = "Afghanistan GDP Level (2000–2023)",
+    x = "Year",
+    y = "GDP (Billions US$)"
+  ) +
+  theme_minimal()
+
+# Chart 2: Annual GDP Growth Rate
+p2 <- WB_clean |> 
+  filter(Country.Name == "Afghanistan", year >= 2000, year <= 2023) |> 
+  mutate(GDPgr = as.numeric(GDPgr)) |> 
+  filter(!is.na(GDPgr)) |> 
+  ggplot(aes(x = year, y = GDPgr)) +
+  geom_line(color = "#e74c3c", linewidth = 1) +
+  geom_point(color = "#e74c3c", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  labs(
+    title = "Afghanistan GDP Growth Rate (2000–2023)",
+    x = "Year",
+    y = "GDP Growth Rate (Annual %)"
+  ) +
+  theme_minimal()
+
+p1
+p2
+```
+
+**Interpretation**
+
+- **Generalization:** Afghanistan experienced rapid but volatile economic expansion from 2000 to 2013, followed by a period of weak growth, and then a severe contraction in 2021 that coincided with the Taliban's return to power.
+- **Examples:** Total GDP expanded from about \$3.5 billion in 2000 to over \$20 billion by 2013, with growth above 10% in several years (peaking near 29% in 2002). In 2021, GDP contracted by about 21%, the largest downturn in the recorded timeframe.
+- **Exceptions:** The year 2001 shows a contraction of about 9% immediately before the post-2002 rebound. After 2013, growth stayed low (roughly 1% to 4% per year through 2019). The contraction continued in 2022 (about −6%), with only a modest rebound in 2023 (about +2%). GDP is measured in current US dollars and growth in constant prices, so the two charts are not directly comparable, and this descriptive series cannot isolate causes.
+
+## 7. Custom Analysis: Socioeconomic Level vs. Corruption Perception (Education)
+
+**Research Question:** Do individuals with higher levels of education report lower perceptions of public corruption?
+
+**Hypothesis:** Highly educated individuals report lower corruption perception scores compared to individuals with lower or middle education levels.
+
+```{r}
+#| label: fig-education-vs-perception
+#| fig-cap: "Corruption perception distributions across education levels."
+
+WVS_WB |> 
+  filter(!is.na(education), !is.na(corruption_perception)) |> 
+  mutate(education = factor(education, 
+                            levels = c(1, 2, 3), 
+                            labels = c("Lower", "Middle", "Higher"))) |> 
+  ggplot(aes(x = education, y = corruption_perception, fill = education)) +
+  geom_boxplot() +
+  labs(
+    title = "Corruption Perception by Education Level",
+    x = "Education Level",
+    y = "Corruption Perception Score (1–10)",
+    fill = "Education Level"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#| label: education-test
+#| code-summary: "Click to show statistical tests"
+
+edu_data <- WVS_WB |> 
+  filter(!is.na(education), !is.na(corruption_perception)) |> 
+  mutate(education = factor(education, levels = c(1, 2, 3),
+                            labels = c("Lower", "Middle", "Higher")))
+
+# Group means
+edu_data |> 
+  group_by(education) |> 
+  summarise(n = n(), mean = mean(corruption_perception))
+
+# Pooled comparison (all respondents together)
+lm(corruption_perception ~ education, data = edu_data) |> 
+  broom::tidy() |> 
+  filter(str_starts(term, "education"))
+
+# Within-country comparison (adds a separate baseline for each country)
+lm(corruption_perception ~ education + B_COUNTRY_ALPHA, data = edu_data) |> 
+  broom::tidy() |> 
+  filter(str_starts(term, "education"))
+```
+
+**Interpretation**
+
+- **Generalization:** Pooled across all respondents, highly educated citizens report somewhat lower perceived corruption. However, this difference mostly reflects differences *between countries* and disappears (and slightly reverses) when respondents are compared within the same country.
+- **Examples:** Lower and Middle education groups have identical median scores of 8 out of 10, while the Higher group has a median of 7. Mean scores are 7.35 (Lower), 7.20 (Middle), and 6.86 (Higher). In a pooled regression, the Higher group scores 0.49 points below the Lower group (*p* \< 0.001). Within countries, however, the Higher group scores 0.14 points *above* the Lower group (*p* = 0.003), and the Middle group 0.31 points above.
+- **Exceptions:** The within-country pattern is not uniform. In some countries, such as Canada and New Zealand, higher-educated respondents report less corruption than lower-educated respondents, while in others, such as Kyrgyz Republic and Zimbabwe, they report more.
+- **Hypothesis Evaluation: Not Supported once country is accounted for.** The raw pooled gap looks like support for the hypothesis, but it mixes education with national context. Comparing people within the same country, higher education is not associated with lower perceived corruption.
+
+## 8. Key Findings
+
+- **Sample:** 21,187 respondents from 14 countries surveyed in 2020, all matched to World Bank data.
+- **Sex:** No difference in perceived corruption (men 7.09, women 7.10).
+- **Institutions:** Countries with stronger control of corruption report lower perceived corruption (*r* = −0.69 across 14 countries), though the result rests heavily on three high-control countries.
+- **Education:** A pooled gap (higher-educated report less corruption) disappears within countries.
+- **Afghanistan:** Rapid but volatile growth through 2013, weak growth afterward, and a contraction of about 21% in 2021.
+
+## 9. Limitations
+
+- **Perceptions, not corruption itself:** The WVS item measures what people believe, not actual corruption levels.
+- **Overlapping measures:** The World Bank Control of Corruption indicator is partly built from perception-based sources, so it is not fully independent of the survey item.
+- **Small country sample:** Only 14 countries were surveyed in 2020, with just three at the high-control end.
+- **Country-level inference:** Results from country averages do not describe individual respondents.
+- **Unweighted data:** WVS survey weights were not applied.
+- **Coarse education measure:** Education is recoded into only three broad groups.
