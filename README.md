@@ -2,7 +2,7 @@
 
 How do demographics, education, and national institutions shape people's perceptions of corruption? This project merges World Values Survey (WVS) Wave 7 data with World Bank indicators and tests three hypotheses in R. It also includes a case study of Afghanistan's economy from 2000 to 2023.
 
-**[View the live report]()**
+**[View the live report](https://soundisclear.github.io/CorruptionPerception/)**
 
 ## Research Questions
 1. Do men and women differ in how corrupt they perceive their country to be?
