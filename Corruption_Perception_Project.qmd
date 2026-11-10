@@ -33,7 +33,7 @@ This pipeline filters primary tracking columns, renames variable identifiers, re
 #| code-summary: "Click to show WVS data cleaning code"
 
 # Load raw survey data
-WVS <- read.csv(here("CorruptionPerceptionAnalysis", "Data", "WVS_W7.csv"))
+WVS <- readRDS(here("Data", "WVS_W7.rds"))
 
 # Subset, rename, recode missing values, and bin age categories
 WVS_subset <- WVS |> 
@@ -79,7 +79,7 @@ World Bank macroeconomic indicator datasets are delivered in a wide format. This
 #| code-summary: "Click to show reshaping and joining code"
 
 # Load World Bank data
-corruption <- read.csv(here("CorruptionPerceptionAnalysis", "Data", "WorldBank_corruption.csv"))
+corruption <- read.csv(here("Data", "WorldBank_corruption.csv"))
 
 # Reshape wide year columns into long format, then pivot indicator series wide
 WB_clean <- corruption |>
