@@ -20,7 +20,7 @@ How do demographics, education, and national institutions shape people's percept
 | Dataset | Description | Included in repo? |
 |---|---|---|
 | World Values Survey, Wave 7 (2017-2022) | Individual survey responses. This project uses the 2020 cross-section: 21,187 respondents from 14 countries. | No. The WVS conditions of use prohibit redistributing the data files. Download it yourself after registering: https://www.worldvaluessurvey.org/WVSDocumentationWV7.jsp |
-| World Bank World Development Indicators | Country-level indicators, including Control of Corruption and GDP. Accessed: (month, year). | Yes, in `Data/` |
+| World Bank World Development Indicators | Country-level indicators, including Control of Corruption and GDP. | Yes, in `Data/` |
 
 Variable definitions are in [`Data/codebook.md`](Data/codebook.md).
 
@@ -48,8 +48,11 @@ Variable definitions are in [`Data/codebook.md`](Data/codebook.md).
 R, Quarto, tidyverse, ggplot2. Skills shown: data cleaning and reshaping, relational joins, hypothesis testing, regression, data visualization, and reproducible reporting.
 
 ## Data Sources and Citations
-- Haerpfer, C., Inglehart, R., Moreno, A., Welzel, C., Kizilova, K., Diez-Medrano J., Lagos, M., Norris, P., Ponarin, E. & Puranen, B. (eds.). *World Values Survey: Round Seven, Country-Pooled Datafile.* Madrid, Spain & Vienna, Austria: JD Systems Institute & WVSA Secretariat. https://www.worldvaluessurvey.org
+- Haerpfer, C., Inglehart, R., Moreno, A., Welzel, C., Kizilova, K., Diez-Medrano J., M. Lagos, P. Norris, E. Ponarin & B. Puranen (eds.). 2022. *World Values Survey: Round Seven - Country-Pooled Datafile Version 5.0.* Madrid, Spain & Vienna, Austria: JD Systems Institute & WVSA Secretariat. doi:10.14281/18241.20
 - World Bank. *World Development Indicators.* Washington, DC: The World Bank. https://databank.worldbank.org/source/world-development-indicators
+
+## License
+Code is released under the MIT License (see `LICENSE`). The data remain subject to the terms of their providers.
 
 ## Author
 Marshall Prizio
